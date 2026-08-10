@@ -1,0 +1,159 @@
+# Full stack: MySQL + Backend (DNS + API) + Frontend (nginx) + phpMyAdmin
+#
+# This compose file lives in its own repository and has NO local access to
+# the backend or frontend source trees.
+#
+# During image build, thin Dockerfiles under ./docker/{backend,frontend}
+# clone the app repositories from GitHub (works on Windows, macOS, Linux).
+#
+# Backend:  https://github.com/Mohammad-Alaaei/node-dns-server.git
+# Frontend: https://github.com/Mohammad-Alaaei/dns-server-frontend.git
+#
+# Usage:
+#   cp .env.example .env          # edit values if needed
+#   docker compose up -d --build
+#
+# Ports:
+#   80      → Admin UI
+#   8080    → phpMyAdmin
+#   53/udp  → DNS
+
+name: dns-server
+
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secret}
+      MYSQL_DATABASE: ${DB_NAME:-dns_server}
+      MYSQL_USER: ${DB_USER:-dns}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_secret}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ./docker/backend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_REPO: ${BACKEND_REPO:-https://github.com/Mohammad-Alaaei/node-dns-server.git}
+        BACKEND_REF: ${BACKEND_REF:-main}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # DNS must listen on all interfaces inside the container
+      SERVER_IP: "0.0.0.0"
+      SERVER_PORT: "53"
+      DNS_PORT: "53"
+      # API only needs to be reachable by the frontend container
+      API_HOST: "0.0.0.0"
+      API_PORT: "3000"
+      API_ENABLED: "true"
+      # Same-origin via nginx proxy → CORS almost unused, but set safe defaults
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+      API_CORS_CREDENTIALS: "true"
+      API_JWT_SECRET: ${API_JWT_SECRET:-change-me-in-production}
+      API_JWT_EXPIRES_IN: ${API_JWT_EXPIRES_IN:-15m}
+      API_REFRESH_EXPIRES_IN: ${API_REFRESH_EXPIRES_IN:-7d}
+      # Database
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-dns_server}
+      DB_USER: ${DB_USER:-dns}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      # Bootstrap admin (created only if no real user exists)
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      # Database pool / logging
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      DB_POOL_MIN: ${DB_POOL_MIN:-0}
+      DB_POOL_ACQUIRE: ${DB_POOL_ACQUIRE:-30000}
+      DB_POOL_IDLE: ${DB_POOL_IDLE:-10000}
+      DB_LOGGING: ${DB_LOGGING:-false}
+      # Runtime / DNS behaviour
+      LOG_DIR: /app/logs
+      LOG_FLUSH_INTERVAL: ${LOG_FLUSH_INTERVAL:-5000}
+      LOG_MAX_BUFFER_SIZE: ${LOG_MAX_BUFFER_SIZE:-100}
+      LOG_MAX_SIZE_KB: ${LOG_MAX_SIZE_KB:-10240}
+      CACHE_LEVEL: ${CACHE_LEVEL:-ALL}
+      CACHE_EXPIRE_TIME: ${CACHE_EXPIRE_TIME:-60}
+      FLUSH_INTERVAL_MS: ${FLUSH_INTERVAL_MS:-60000}
+      DNS_TTL: ${DNS_TTL:-60}
+      DNS_TIMEOUT: ${DNS_TIMEOUT:-8000}
+      PTR_HOSTNAME: ${PTR_HOSTNAME:-localhost.com}
+      DEBUG_PREFIX: ${DEBUG_PREFIX:-_.}
+      # Space/comma-separated IPs that mark answers as FILTERED
+      FILTER_IPS: ${FILTER_IPS:-}
+      # Space/comma-separated IPs to skip from the log queue only
+      IGNORE_IPS: ${IGNORE_IPS:-}
+      # Optional RSA keys for login encryption (use \n for newlines)
+      API_RSA_PUBLIC_KEY: ${API_RSA_PUBLIC_KEY:-}
+      API_RSA_PRIVATE_KEY: ${API_RSA_PRIVATE_KEY:-}
+      # Optional UI defaults (seeded into new user settings)
+      UI_LANGUAGE: ${UI_LANGUAGE:-en}
+      UI_THEME: ${UI_THEME:-system}
+      UI_DARK_MODE: ${UI_DARK_MODE:-false}
+    volumes:
+      - backend_logs:/app/logs
+      - backend_data:/app/data          # seed marker lives here
+    ports:
+      - "53:53/udp"
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./docker/frontend
+      dockerfile: Dockerfile
+      args:
+        FRONTEND_REPO: ${FRONTEND_REPO:-https://github.com/Mohammad-Alaaei/dns-server-frontend.git}
+        FRONTEND_REF: ${FRONTEND_REF:-main}
+        # Empty = browser uses relative /api (nginx proxies it)
+        VITE_API_BASE_URL: ""
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    networks:
+      - internal
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      PMA_USER: ${DB_USER:-dns}
+      PMA_PASSWORD: ${DB_PASSWORD:-secret}
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "8080:80"
+    networks:
+      - internal
+
+volumes:
+  mysql_data:
+  backend_logs:
+  backend_data:
+
+networks:
+  internal:
+    driver: bridge
