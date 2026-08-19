@@ -6,14 +6,17 @@ ARG FRONTEND_REF=main
 ARG VITE_API_BASE_URL=
 
 # ---------- fetch source ----------
-FROM alpine:3.20 AS source
+FROM node:22-bookworm AS source
 ARG FRONTEND_REPO
 ARG FRONTEND_REF
-RUN apk add --no-cache git \
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/* \
  && git clone --depth 1 --branch "${FRONTEND_REF}" "${FRONTEND_REPO}" /src
 
 # ---------- build SPA ----------
-FROM node:22-alpine AS builder
+FROM node:22-bookworm AS builder
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 

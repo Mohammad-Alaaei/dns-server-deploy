@@ -1,4 +1,4 @@
-# Full stack: MySQL + Backend (DNS + API) + Frontend (nginx) + phpMyAdmin
+# Full stack: MariaDB + Backend (DNS + API) + Frontend (nginx) + phpMyAdmin
 #
 # This compose file lives in its own repository and has NO local access to
 # the backend or frontend source trees.
@@ -22,7 +22,7 @@ name: dns-server
 
 services:
   db:
-    image: mysql:8.0
+    image: yobasystems/alpine-mariadb:11.4.9-03
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secret}
@@ -30,7 +30,7 @@ services:
       MYSQL_USER: ${DB_USER:-dns}
       MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mariadb_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_secret}"]
       interval: 5s
@@ -150,7 +150,7 @@ services:
       - internal
 
 volumes:
-  mysql_data:
+  mariadb_data:
   backend_logs:
   backend_data:
 
