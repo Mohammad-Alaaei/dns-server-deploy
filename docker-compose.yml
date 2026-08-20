@@ -132,23 +132,6 @@ services:
     networks:
       - internal
 
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin:latest
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      PMA_HOST: db
-      PMA_PORT: 3306
-      PMA_USER: ${DB_USER:-dns}
-      PMA_PASSWORD: ${DB_PASSWORD:-secret}
-      UPLOAD_LIMIT: 64M
-    ports:
-      - "8080:80"
-    networks:
-      - internal
-
 volumes:
   mariadb_data:
   backend_logs:
