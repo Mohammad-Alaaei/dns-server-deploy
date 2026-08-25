@@ -1,4 +1,4 @@
-# Full stack: MariaDB + Backend (DNS + API) + Frontend (nginx) + phpMyAdmin
+# Full stack: MySQL + Backend (DNS + API) + Frontend (nginx) + phpMyAdmin
 #
 # This compose file lives in its own repository and has NO local access to
 # the backend or frontend source trees.
@@ -14,9 +14,10 @@
 #   docker compose up -d --build
 #
 # Ports:
-#   80      → Admin UI
+#   80      → Admin UI (redirects to HTTPS when enabled)
+#   443     → Admin UI HTTPS
 #   8080    → phpMyAdmin
-#   53/udp  → DNS
+#   53/udp  → DNS (IPv4 + IPv6)
 
 name: dns-server
 
@@ -55,8 +56,7 @@ services:
       NODE_ENV: production
       # DNS must listen on all interfaces inside the container
       SERVER_IP: "0.0.0.0"
-            # DNS IPv6 (all interfaces). Empty string disables IPv6 listen.
-      SERVER_IPV6: "::"
+      SERVER_IPV6: ${SERVER_IPV6:-::}
       SERVER_PORT: "53"
       DNS_PORT: "53"
       # API only needs to be reachable by the frontend container
@@ -111,11 +111,10 @@ services:
       - backend_logs:/app/logs
       - backend_data:/app/data          # seed marker lives here
     ports:
-      # DNS — publish on IPv4 and IPv6 host stacks
       - target: 53
         published: 53
         protocol: udp
-        host_ip: 0.0.0.0
+        host_ip: "0.0.0.0"
       - target: 53
         published: 53
         protocol: udp
@@ -137,8 +136,15 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      HTTPS_ENABLED: ${HTTPS_ENABLED:-true}
+      SSL_MODE: ${SSL_MODE:-selfsigned}
+      SSL_CERT_HOSTS: ${SSL_CERT_HOSTS:-localhost,127.0.0.1}
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ${SSL_CERTS_DIR:-./certs}:/etc/nginx/certs
     networks:
       - internal
 
