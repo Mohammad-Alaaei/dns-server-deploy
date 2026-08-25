@@ -48,3 +48,8 @@ ENV HTTPS_ENABLED=true \
     SSL_CERT_HOSTS=localhost,127.0.0.1
 
 EXPOSE 80 443
+
+# Replace stock nginx /docker-entrypoint.sh completely.
+# Using /bin/sh ensures the script runs even if the executable bit is lost on Windows checkouts.
+ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]
+CMD []
