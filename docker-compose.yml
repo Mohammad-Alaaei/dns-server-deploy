@@ -14,7 +14,8 @@
 #   docker compose up -d --build
 #
 # Ports:
-#   80      → Admin UI
+#   80      → Admin UI (redirects to HTTPS when enabled)
+#   443     → Admin UI HTTPS
 #   8080    → phpMyAdmin
 #   53/udp  → DNS (IPv4 + IPv6)
 
@@ -53,23 +54,18 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      # DNS must listen on all interfaces inside the container
       SERVER_IP: "0.0.0.0"
-      # DNS IPv6 (all interfaces). Empty string disables IPv6 listen.
-      SERVER_IPV6: "::"
+      SERVER_IPV6: ${SERVER_IPV6:-::}
       SERVER_PORT: "53"
       DNS_PORT: "53"
-      # API only needs to be reachable by the frontend container
       API_HOST: "0.0.0.0"
       API_PORT: "3000"
       API_ENABLED: "true"
-      # Same-origin via nginx proxy → CORS almost unused, but set safe defaults
-      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost,http://127.0.0.1,https://localhost,https://127.0.0.1}
       API_CORS_CREDENTIALS: "true"
       API_JWT_SECRET: ${API_JWT_SECRET:-change-me-in-production}
       API_JWT_EXPIRES_IN: ${API_JWT_EXPIRES_IN:-15m}
       API_REFRESH_EXPIRES_IN: ${API_REFRESH_EXPIRES_IN:-7d}
-      # Database
       DB_HOST: db
       DB_PORT: "3306"
       DB_NAME: ${DB_NAME:-dns_server}
@@ -96,9 +92,7 @@ services:
       DNS_TIMEOUT: ${DNS_TIMEOUT:-8000}
       PTR_HOSTNAME: ${PTR_HOSTNAME:-localhost.com}
       DEBUG_PREFIX: ${DEBUG_PREFIX:-_.}
-      # Space/comma-separated IPs that mark answers as FILTERED
       FILTER_IPS: ${FILTER_IPS:-}
-      # Space/comma-separated IPs to skip from the log queue only
       IGNORE_IPS: ${IGNORE_IPS:-}
       # Optional RSA keys for login encryption (use \n for newlines)
       API_RSA_PUBLIC_KEY: ${API_RSA_PUBLIC_KEY:-}
@@ -111,11 +105,10 @@ services:
       - backend_logs:/app/logs
       - backend_data:/app/data          # seed marker lives here
     ports:
-      # DNS — publish on IPv4 and IPv6 host stacks
       - target: 53
         published: 53
         protocol: udp
-        host_ip: 0.0.0.0
+        host_ip: "0.0.0.0"
       - target: 53
         published: 53
         protocol: udp
@@ -132,13 +125,19 @@ services:
       args:
         FRONTEND_REPO: ${FRONTEND_REPO:-https://github.com/Mohammad-Alaaei/dns-server-frontend.git}
         FRONTEND_REF: ${FRONTEND_REF:-main}
-        # Empty = browser uses relative /api (nginx proxies it)
         VITE_API_BASE_URL: ""
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      HTTPS_ENABLED: ${HTTPS_ENABLED:-true}
+      SSL_MODE: ${SSL_MODE:-selfsigned}
+      SSL_CERT_HOSTS: ${SSL_CERT_HOSTS:-localhost,127.0.0.1}
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ${SSL_CERTS_DIR:-./certs}:/etc/nginx/certs
     networks:
       - internal
 

@@ -26,11 +26,23 @@ RUN npm run build
 # ---------- production nginx ----------
 FROM nginx:1.27-alpine
 
-RUN rm /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache openssl \
+ && rm -f /etc/nginx/conf.d/default.conf \
+ && mkdir -p /etc/nginx/certs
 
+# SSL entrypoint from this stack repo (authoritative for TLS behaviour)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Optional static fallback from cloned frontend (overwritten at runtime by entrypoint)
 COPY --from=source /src/docker/nginx.conf /etc/nginx/conf.d/default.conf
+
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-EXPOSE 80
+ENV HTTPS_ENABLED=true \
+    SSL_MODE=selfsigned \
+    SSL_CERT_HOSTS=localhost,127.0.0.1
 
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80 443
+
+ENTRYPOINT ["/entrypoint.sh"]

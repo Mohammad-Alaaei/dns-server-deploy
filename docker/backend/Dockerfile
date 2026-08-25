@@ -33,6 +33,7 @@ RUN mkdir -p /app/logs /app/data \
 ENV NODE_ENV=production
 ENV LOG_DIR=/app/logs
 
+# 53/udp is used for both IPv4 and IPv6 DNS inside the container
 EXPOSE 53/udp 3000
 
 ENTRYPOINT ["/sbin/tini", "--"]
