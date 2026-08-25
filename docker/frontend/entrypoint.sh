@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+echo "[ssl] entrypoint starting (pid $$)"
+
 HTTPS_ENABLED="${HTTPS_ENABLED:-true}"
 SSL_MODE="${SSL_MODE:-selfsigned}"
 SSL_CERT_HOSTS="${SSL_CERT_HOSTS:-localhost,127.0.0.1}"
@@ -8,7 +10,6 @@ CERT_DIR="${CERT_DIR:-/etc/nginx/certs}"
 CONF_DIR="/etc/nginx/conf.d"
 CONF_FILE="${CONF_DIR}/default.conf"
 
-# Normalize booleans
 case "$(echo "$HTTPS_ENABLED" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes|on) HTTPS_ENABLED=true ;;
   *) HTTPS_ENABLED=false ;;
@@ -30,6 +31,7 @@ write_http_server() {
   cat > "$CONF_FILE" <<'NGINX'
 server {
     listen 80;
+    listen [::]:80;
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
@@ -70,15 +72,16 @@ NGINX
 
 write_https_server() {
   cat > "$CONF_FILE" <<'NGINX'
-# Redirect all HTTP to HTTPS
 server {
     listen 80;
+    listen [::]:80;
     server_name _;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
@@ -123,51 +126,75 @@ server {
 NGINX
 }
 
+is_ipv4() {
+  echo "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
 generate_selfsigned() {
-  if [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+  if [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ] \
+     && [ -s "$CERT_DIR/fullchain.pem" ] && [ -s "$CERT_DIR/privkey.pem" ]; then
     echo "[ssl] Using existing certificates in $CERT_DIR"
     return 0
   fi
 
   echo "[ssl] Generating self-signed certificate for: $SSL_CERT_HOSTS"
   FIRST=$(echo "$SSL_CERT_HOSTS" | cut -d',' -f1 | tr -d ' ')
-  SAN=""
-  OLD_IFS=$IFS
-  IFS=','
-  for host in $SSL_CERT_HOSTS; do
-    host=$(echo "$host" | tr -d ' ')
-    [ -z "$host" ] && continue
-    case "$host" in
-      *[0-9].*[0-9].*[0-9].*[0-9]*)
-        # rough IPv4
-        if [ -n "$SAN" ]; then SAN="$SAN,IP:$host"; else SAN="IP:$host"; fi
-        ;;
-      *:*)
-        if [ -n "$SAN" ]; then SAN="$SAN,IP:$host"; else SAN="IP:$host"; fi
-        ;;
-      *)
-        if [ -n "$SAN" ]; then SAN="$SAN,DNS:$host"; else SAN="DNS:$host"; fi
-        ;;
-    esac
-  done
-  IFS=$OLD_IFS
+  [ -z "$FIRST" ] && FIRST=localhost
 
-  # Always include localhost / 127.0.0.1 for local access
-  case ",$SAN," in
-    *,DNS:localhost,*) ;;
-    *) SAN="${SAN:+$SAN,}DNS:localhost" ;;
-  esac
-  case ",$SAN," in
-    *,IP:127.0.0.1,*) ;;
-    *) SAN="${SAN:+$SAN,}IP:127.0.0.1" ;;
-  esac
+  ALT_CONF=$(mktemp)
+  dns_i=1
+  ip_i=1
+
+  {
+    echo "[req]"
+    echo "distinguished_name = req_dn"
+    echo "x509_extensions = v3_req"
+    echo "prompt = no"
+    echo "[req_dn]"
+    echo "CN = ${FIRST}"
+    echo "[v3_req]"
+    echo "subjectAltName = @alt_names"
+    echo "[alt_names]"
+
+    has_localhost=0
+    has_loopback=0
+    OLD_IFS=$IFS
+    IFS=','
+    for host in $SSL_CERT_HOSTS localhost 127.0.0.1; do
+      host=$(echo "$host" | tr -d ' ')
+      [ -z "$host" ] && continue
+      if [ "$host" = "localhost" ]; then
+        [ "$has_localhost" = 1 ] && continue
+        has_localhost=1
+        echo "DNS.${dns_i} = localhost"
+        dns_i=$((dns_i + 1))
+      elif [ "$host" = "127.0.0.1" ]; then
+        [ "$has_loopback" = 1 ] && continue
+        has_loopback=1
+        echo "IP.${ip_i} = 127.0.0.1"
+        ip_i=$((ip_i + 1))
+      elif is_ipv4 "$host"; then
+        echo "IP.${ip_i} = ${host}"
+        ip_i=$((ip_i + 1))
+      else
+        echo "DNS.${dns_i} = ${host}"
+        dns_i=$((dns_i + 1))
+      fi
+    done
+    IFS=$OLD_IFS
+  } > "$ALT_CONF"
+
+  echo "[ssl] openssl config:"
+  cat "$ALT_CONF"
 
   openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
     -keyout "$CERT_DIR/privkey.pem" \
     -out "$CERT_DIR/fullchain.pem" \
-    -subj "/CN=${FIRST}" \
-    -addext "subjectAltName=${SAN}"
+    -config "$ALT_CONF"
 
+  rm -f "$ALT_CONF"
+  chmod 644 "$CERT_DIR/fullchain.pem" 2>/dev/null || true
+  chmod 600 "$CERT_DIR/privkey.pem" 2>/dev/null || true
   echo "[ssl] Self-signed certificate written to $CERT_DIR"
 }
 
@@ -177,8 +204,9 @@ case "$SSL_MODE" in
     write_http_server
     ;;
   custom)
-    if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
-      echo "[ssl] ERROR: SSL_MODE=custom requires $CERT_DIR/fullchain.pem and privkey.pem" >&2
+    if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ] \
+       || [ ! -s "$CERT_DIR/fullchain.pem" ] || [ ! -s "$CERT_DIR/privkey.pem" ]; then
+      echo "[ssl] ERROR: SSL_MODE=custom requires non-empty fullchain.pem and privkey.pem in $CERT_DIR" >&2
       exit 1
     fi
     echo "[ssl] Using custom certificates from $CERT_DIR"
@@ -190,5 +218,7 @@ case "$SSL_MODE" in
     ;;
 esac
 
+echo "[ssl] nginx config preview:"
+head -12 "$CONF_FILE"
 echo "[ssl] Starting nginx (HTTPS_ENABLED=$HTTPS_ENABLED SSL_MODE=$SSL_MODE)"
-exec nginx -g 'daemon off;'
+exec /usr/sbin/nginx -g 'daemon off;'
