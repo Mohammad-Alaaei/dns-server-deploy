@@ -9,7 +9,9 @@ ARG VITE_API_BASE_URL=
 FROM node:22-bookworm AS source
 ARG FRONTEND_REPO
 ARG FRONTEND_REF
-RUN apk add --no-cache git \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
     && git clone --depth 1 --branch "${FRONTEND_REF}" "${FRONTEND_REPO}" /src
 
 # ---------- build SPA ----------
