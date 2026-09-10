@@ -1,4 +1,6 @@
 #!/bin/sh
+# TLS bootstrap for Admin UI nginx.
+# This file MUST be the image ENTRYPOINT (replaces stock /docker-entrypoint.sh).
 set -e
 
 echo "[ssl] entrypoint starting (pid $$)"

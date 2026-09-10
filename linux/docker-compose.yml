@@ -1,17 +1,17 @@
 # Full stack: MySQL + Backend (DNS + API) + Frontend (nginx) + phpMyAdmin
 #
-# This compose file lives in its own repository and has NO local access to
-# the backend or frontend source trees.
+# Platform: Windows / Linux / macOS
+#
+# This compose file lives under linux/ and has NO local access to the
+# backend or frontend source trees.
 #
 # During image build, thin Dockerfiles under ./docker/{backend,frontend}
-# clone the app repositories from GitHub (works on Windows, macOS, Linux).
+# clone the app repositories from GitHub.
 #
 # Backend:  https://github.com/Mohammad-Alaaei/node-dns-server.git
 # Frontend: https://github.com/Mohammad-Alaaei/dns-server-frontend.git
 #
-# Usage:
-#   cp .env.example .env          # edit values if needed
-#   docker compose up -d --build
+# Prefer: ./deploy.sh  (from the full-deploy root)
 #
 # Ports:
 #   80      → Admin UI (redirects to HTTPS when enabled)
@@ -48,6 +48,7 @@ services:
       args:
         BACKEND_REPO: ${BACKEND_REPO:-https://github.com/Mohammad-Alaaei/node-dns-server.git}
         BACKEND_REF: ${BACKEND_REF:-main}
+        CACHEBUST: ${CACHEBUST:-1}
     restart: unless-stopped
     depends_on:
       db:
@@ -71,20 +72,15 @@ services:
       DB_NAME: ${DB_NAME:-dns_server}
       DB_USER: ${DB_USER:-dns}
       DB_PASSWORD: ${DB_PASSWORD:-secret}
-      # Bootstrap admin (created only if no real user exists)
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
-      # Database pool / logging
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       DB_POOL_MIN: ${DB_POOL_MIN:-0}
       DB_POOL_ACQUIRE: ${DB_POOL_ACQUIRE:-30000}
       DB_POOL_IDLE: ${DB_POOL_IDLE:-10000}
       DB_LOGGING: ${DB_LOGGING:-false}
-      # Runtime / DNS behaviour
-      LOG_DIR: /app/logs
-      LOG_FLUSH_INTERVAL: ${LOG_FLUSH_INTERVAL:-5000}
-      LOG_MAX_BUFFER_SIZE: ${LOG_MAX_BUFFER_SIZE:-100}
-      LOG_MAX_SIZE_KB: ${LOG_MAX_SIZE_KB:-10240}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      API_RSA_PUBLIC_KEY: ${API_RSA_PUBLIC_KEY:-}
+      API_RSA_PRIVATE_KEY: ${API_RSA_PRIVATE_KEY:-}
       CACHE_LEVEL: ${CACHE_LEVEL:-ALL}
       CACHE_EXPIRE_TIME: ${CACHE_EXPIRE_TIME:-60}
       FLUSH_INTERVAL_MS: ${FLUSH_INTERVAL_MS:-60000}
@@ -94,16 +90,15 @@ services:
       DEBUG_PREFIX: ${DEBUG_PREFIX:-_.}
       FILTER_IPS: ${FILTER_IPS:-}
       IGNORE_IPS: ${IGNORE_IPS:-}
-      # Optional RSA keys for login encryption (use \n for newlines)
-      API_RSA_PUBLIC_KEY: ${API_RSA_PUBLIC_KEY:-}
-      API_RSA_PRIVATE_KEY: ${API_RSA_PRIVATE_KEY:-}
-      # Optional UI defaults (seeded into new user settings)
+      LOG_FLUSH_INTERVAL: ${LOG_FLUSH_INTERVAL:-5000}
+      LOG_MAX_BUFFER_SIZE: ${LOG_MAX_BUFFER_SIZE:-100}
+      LOG_MAX_SIZE_KB: ${LOG_MAX_SIZE_KB:-10240}
       UI_LANGUAGE: ${UI_LANGUAGE:-en}
       UI_THEME: ${UI_THEME:-system}
       UI_DARK_MODE: ${UI_DARK_MODE:-false}
     volumes:
       - backend_logs:/app/logs
-      - backend_data:/app/data          # seed marker lives here
+      - backend_data:/app/data
     ports:
       - target: 53
         published: 53
@@ -126,6 +121,7 @@ services:
         FRONTEND_REPO: ${FRONTEND_REPO:-https://github.com/Mohammad-Alaaei/dns-server-frontend.git}
         FRONTEND_REF: ${FRONTEND_REF:-main}
         VITE_API_BASE_URL: ""
+        CACHEBUST: ${CACHEBUST:-1}
     restart: unless-stopped
     depends_on:
       - backend
@@ -137,7 +133,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ${SSL_CERTS_DIR:-./certs}:/etc/nginx/certs
+      - ${SSL_CERTS_DIR:-../certs}:/etc/nginx/certs
     networks:
       - internal
 

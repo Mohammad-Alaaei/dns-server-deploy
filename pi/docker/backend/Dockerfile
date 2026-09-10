@@ -1,5 +1,5 @@
 # Full-stack wrapper: clone the backend repo, then build the production image.
-# Works on Windows / macOS / Linux (no remote Git build-context required).
+# Same backend image for Linux and Raspberry Pi (multi-arch base images).
 
 ARG BACKEND_REPO=https://github.com/Mohammad-Alaaei/node-dns-server.git
 ARG BACKEND_REF=main
@@ -8,7 +8,9 @@ ARG BACKEND_REF=main
 FROM alpine:3.20 AS source
 ARG BACKEND_REPO
 ARG BACKEND_REF
+ARG CACHEBUST=1
 RUN apk add --no-cache git \
+ && echo "cachebust=${CACHEBUST}" \
  && git clone --depth 1 --branch "${BACKEND_REF}" "${BACKEND_REPO}" /src
 
 # ---------- production image ----------
@@ -20,9 +22,9 @@ WORKDIR /app
 
 # Dependencies first (better layer cache when only app code changes)
 COPY --from=source /src/package.json /src/package-lock.json ./
-RUN npm ci --omit=dev \
- && npm install sequelize-cli --no-save \
- && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev \
+ && npm install sequelize-cli --no-save
 
 # Full source
 COPY --from=source /src/ ./

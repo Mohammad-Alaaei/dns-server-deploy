@@ -1,135 +1,114 @@
-# DNS Stack (full Docker compose)
+# DNS Stack (full Docker deploy)
 
-Runs the complete product:
+Runs the complete product by **cloning** the app repos from GitHub at image build time. You do **not** need the backend/frontend source trees next to this folder.
 
-| Service        | Role                                             |
-| -------------- | ------------------------------------------------ |
-| **db**         | MySQL 8                                          |
-| **backend**    | Custom DNS server + REST API (`node-dns-server`) |
-| **frontend**   | Admin UI (nginx + SPA)                           |
-| **phpmyadmin** | DB UI (optional ops)                             |
-
-Application sources are **not** required next to this compose file. Thin Dockerfiles under `docker/{backend,frontend}` **clone** the app repos from GitHub at image build time.
+| Service | Role |
+| -------- | ---- |
+| **db** | MySQL 8.4 (Linux) or Alpine MariaDB (Pi) |
+| **backend** | Custom DNS server + REST API (`node-dns-server`) |
+| **frontend** | Admin UI (nginx + SPA) |
+| **phpmyadmin** | DB UI (Linux variant only) |
 
 - Backend: https://github.com/Mohammad-Alaaei/node-dns-server.git
 - Frontend: https://github.com/Mohammad-Alaaei/dns-server-frontend.git
 
-Override clone targets with `BACKEND_REPO` / `BACKEND_REF` and `FRONTEND_REPO` / `FRONTEND_REF`.
+Override with `BACKEND_REPO` / `BACKEND_REF` and `FRONTEND_REPO` / `FRONTEND_REF`.
 
 ---
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # edit secrets and TLS options if needed
-docker compose up -d --build
+cp .env.example .env          # edit secrets / TLS if needed
+./deploy.sh                   # interactive menu (Windows Git Bash, Linux, Pi)
 ```
 
-**Default ports**
+Or non-interactive:
 
-| Port       | Service                                                |
-| ---------- | ------------------------------------------------------ |
-| **80**     | Admin UI HTTP (redirects to HTTPS when TLS is enabled) |
-| **443**    | Admin UI HTTPS                                         |
-| **8080**   | phpMyAdmin                                             |
-| **53/udp** | DNS (IPv4 + IPv6)                                      |
+```bash
+./deploy.sh soft --platform linux --full
+./deploy.sh soft --platform pi --frontend
+./deploy.sh hard --platform pi
+./deploy.sh fresh --platform linux
+./deploy.sh status
+./deploy.sh stop
+```
 
-Default TLS: **HTTPS enabled**, **self-signed** certificates. Open **https://localhost** (browser warning on self-signed is expected).
+### Update modes
+
+| Mode | What it does |
+| ---- | ------------ |
+| **Soft** | Forces a fresh git clone (`CACHEBUST`). Reuses npm layers when `package-lock.json` is unchanged. Uses BuildKit npm cache so even dependency changes stay relatively cheap. |
+| **Hard** | `--no-cache --pull` — re-downloads base images and all packages. |
+| **Fresh** | `down -v` (deletes volumes) + Hard rebuild. |
+
+### Platforms
+
+| Folder | Target |
+| ------ | ------ |
+| `linux/` | Windows, Linux, macOS (MySQL 8.4 + phpMyAdmin, alpine Node builds) |
+| `pi/` | Raspberry Pi (Alpine MariaDB, bookworm Node builds for frontend) |
+
+Backend Dockerfile is the same on both platforms.
+
+### Default ports
+
+| Port | Service |
+| ---- | ------- |
+| **80** | Admin UI HTTP (redirects to HTTPS when TLS enabled) |
+| **443** | Admin UI HTTPS |
+| **8080** | phpMyAdmin (Linux only) |
+| **53/udp** | DNS (IPv4 + IPv6) |
+
+Default TLS: HTTPS on, self-signed certs. Open https://localhost (browser warning expected).
 
 ---
 
 ## TLS / HTTPS (frontend nginx)
 
-TLS terminates on the **frontend** container only. The backend API stays on the internal Docker network over HTTP; nginx proxies `/api` and sets `X-Forwarded-Proto`.
+TLS terminates on the **frontend** container. Backend stays on the internal network over HTTP; nginx proxies `/api`.
 
-Configuration is **runtime** environment on the `frontend` service (see `.env.example`). No SPA rebuild is required to change TLS mode.
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HTTPS_ENABLED` | `true` | Master switch |
+| `SSL_MODE` | `selfsigned` | `selfsigned` / `custom` / `off` |
+| `SSL_CERT_HOSTS` | `localhost,127.0.0.1` | SAN list for self-signed certs |
+| `SSL_CERTS_DIR` | repo-root `certs/` | Host path mounted at `/etc/nginx/certs` |
 
-### Environment variables
+`deploy.sh` always points `SSL_CERTS_DIR` at the repo-root `certs/` folder.
 
-| Variable         | Default               | Description                                                                            |
-| ---------------- | --------------------- | -------------------------------------------------------------------------------------- |
-| `HTTPS_ENABLED`  | `true`                | Master switch. `false` → HTTP only on port 80.                                         |
-| `SSL_MODE`       | `selfsigned`          | `selfsigned` \| `custom` \| `off`                                                      |
-| `SSL_CERT_HOSTS` | `localhost,127.0.0.1` | SAN list for generated self-signed certificates (comma-separated DNS names and/or IPs) |
-| `SSL_CERTS_DIR`  | `./certs`             | Host path mounted at `/etc/nginx/certs` inside the frontend container                  |
+---
 
-When `HTTPS_ENABLED=false`, `SSL_MODE` is forced off regardless of its value.
-
-### Mode matrix
-
-| `HTTPS_ENABLED` | `SSL_MODE`   | Behaviour                                                                                                 |
-| --------------- | ------------ | --------------------------------------------------------------------------------------------------------- |
-| `true`          | `selfsigned` | Port **443** with self-signed cert (generated if missing). Port **80** redirects to HTTPS.                |
-| `true`          | `custom`     | Port **443** using `fullchain.pem` + `privkey.pem` from the certs volume. Port **80** redirects to HTTPS. |
-| `true`          | `off`        | HTTP only on port **80**.                                                                                 |
-| `false`         | _(ignored)_  | HTTP only on port **80**.                                                                                 |
-
-### Examples
+## Manual compose (without the menu)
 
 ```bash
-# Default: HTTPS + self-signed (localhost / 127.0.0.1)
-docker compose up -d --build
+# Linux / Windows
+docker compose -f linux/docker-compose.yml --project-directory linux up -d --build
 
-# Self-signed for your LAN name or IP
-SSL_CERT_HOSTS=dns.example.lan,192.168.1.10 docker compose up -d --build
-
-# Production-like custom certificates
-# 1. Place files:
-#      ./certs/fullchain.pem
-#      ./certs/privkey.pem
-# 2. Run:
-SSL_MODE=custom docker compose up -d --build
-
-# Lab / no TLS
-HTTPS_ENABLED=false docker compose up -d --build
+# Raspberry Pi
+docker compose -f pi/docker-compose.yml --project-directory pi up -d --build
 ```
 
-### Certificate volume
-
-```yaml
-# compose mounts:
-#   ${SSL_CERTS_DIR:-./certs} → /etc/nginx/certs
-```
-
-- **selfsigned**: entrypoint creates `fullchain.pem` and `privkey.pem` when absent; files remain on the host under `SSL_CERTS_DIR` across restarts.
-- **custom**: both PEM files must exist before start; otherwise the frontend container exits with an error.
-
-Implementation lives in:
-
-- `docker/frontend/entrypoint.sh` (copied into the image; authoritative for TLS in this stack)
-- Frontend repo `docker/entrypoint.sh` (used when building the UI image from that repo alone)
-
-### CORS and HTTPS
-
-If the browser origin is `https://…` and the API is not same-origin, ensure `API_CORS_ORIGINS` includes those origins (`.env.example` already lists `https://localhost` and `https://127.0.0.1`). With the default nginx `/api` proxy, UI and API share the same host and CORS is usually unused.
-
----
-
-## Password encryption (not the same as TLS)
-
-Login, change-password, and create-user **always** send RSA-OAEP ciphertext (SHA-256, base64) from the Admin UI (`node-forge`), using the backend public key from `GET /api/auth/public-key`.
-
-| Layer                                  | Purpose                                                                            |
-| -------------------------------------- | ---------------------------------------------------------------------------------- |
-| **TLS** (`HTTPS_ENABLED` / `SSL_MODE`) | Encrypt the whole HTTP session browser ↔ nginx                                     |
-| **RSA-OAEP** (frontend crypto)         | Encrypt passwords before they leave the browser — **still used when HTTPS is off** |
-
-Disabling TLS does **not** disable password encryption.
-
----
-
-## Other useful env
-
-See `.env.example` for MySQL, JWT, admin bootstrap, DNS cache levels, and Git repo/ref overrides.
+For Soft-style rebuild without the script:
 
 ```bash
-# Pin frontend/backend git refs
-FRONTEND_REF=main
-BACKEND_REF=main
+docker compose -f pi/docker-compose.yml --project-directory pi build \
+  --build-arg CACHEBUST=$(date +%s) frontend
 ```
 
 ---
 
-## Frontend-only compose
+## Layout
 
-To run only the Admin UI image, use the compose file inside the frontend repository (`dns-admin-ui` / dns-server-frontend). TLS variables and behaviour match this document; see that repo’s README for standalone API URL build args (`VITE_API_BASE_URL`).
+```
+full-deploy/
+├── deploy.sh              # interactive + CLI entrypoint
+├── .env.example
+├── certs/                 # TLS certs (shared)
+├── linux/
+│   ├── docker-compose.yml
+│   └── docker/{backend,frontend}/
+└── pi/
+    ├── docker-compose.yml
+    └── docker/{backend,frontend}/
+```

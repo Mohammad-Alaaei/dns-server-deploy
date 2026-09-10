@@ -1,0 +1,152 @@
+# Full stack: MariaDB + Backend (DNS + API) + Frontend (nginx)
+#
+# Platform: Raspberry Pi
+#
+# This compose file lives under pi/ and has NO local access to the
+# backend or frontend source trees.
+#
+# During image build, thin Dockerfiles under ./docker/{backend,frontend}
+# clone the app repositories from GitHub.
+#
+# Backend:  https://github.com/Mohammad-Alaaei/node-dns-server.git
+# Frontend: https://github.com/Mohammad-Alaaei/dns-server-frontend.git
+#
+# Prefer: ./deploy.sh  (from the full-deploy root)
+#
+# Ports:
+#   80      → Admin UI (redirects to HTTPS when enabled)
+#   443     → Admin UI HTTPS
+#   53/udp  → DNS (IPv4 + IPv6)
+
+name: dns-server
+
+services:
+  db:
+    image: yobasystems/alpine-mariadb:11.4.9-03
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secret}
+      MYSQL_DATABASE: ${DB_NAME:-dns_server}
+      MYSQL_USER: ${DB_USER:-dns}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_secret}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ./docker/backend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_REPO: ${BACKEND_REPO:-https://github.com/Mohammad-Alaaei/node-dns-server.git}
+        BACKEND_REF: ${BACKEND_REF:-main}
+        CACHEBUST: ${CACHEBUST:-1}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      SERVER_IP: "0.0.0.0"
+      SERVER_IPV6: ${SERVER_IPV6:-::}
+      SERVER_PORT: "53"
+      DNS_PORT: "53"
+      API_HOST: "0.0.0.0"
+      API_PORT: "3000"
+      API_ENABLED: "true"
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost,http://127.0.0.1,https://localhost,https://127.0.0.1}
+      API_CORS_CREDENTIALS: "true"
+      API_JWT_SECRET: ${API_JWT_SECRET:-change-me-in-production}
+      API_JWT_EXPIRES_IN: ${API_JWT_EXPIRES_IN:-15m}
+      API_REFRESH_EXPIRES_IN: ${API_REFRESH_EXPIRES_IN:-7d}
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-dns_server}
+      DB_USER: ${DB_USER:-dns}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      DB_POOL_MIN: ${DB_POOL_MIN:-0}
+      DB_POOL_ACQUIRE: ${DB_POOL_ACQUIRE:-30000}
+      DB_POOL_IDLE: ${DB_POOL_IDLE:-10000}
+      DB_LOGGING: ${DB_LOGGING:-false}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      API_RSA_PUBLIC_KEY: ${API_RSA_PUBLIC_KEY:-}
+      API_RSA_PRIVATE_KEY: ${API_RSA_PRIVATE_KEY:-}
+      CACHE_LEVEL: ${CACHE_LEVEL:-ALL}
+      CACHE_EXPIRE_TIME: ${CACHE_EXPIRE_TIME:-60}
+      FLUSH_INTERVAL_MS: ${FLUSH_INTERVAL_MS:-60000}
+      DNS_TTL: ${DNS_TTL:-60}
+      DNS_TIMEOUT: ${DNS_TIMEOUT:-8000}
+      PTR_HOSTNAME: ${PTR_HOSTNAME:-localhost.com}
+      DEBUG_PREFIX: ${DEBUG_PREFIX:-_.}
+      FILTER_IPS: ${FILTER_IPS:-}
+      IGNORE_IPS: ${IGNORE_IPS:-}
+      LOG_FLUSH_INTERVAL: ${LOG_FLUSH_INTERVAL:-5000}
+      LOG_MAX_BUFFER_SIZE: ${LOG_MAX_BUFFER_SIZE:-100}
+      LOG_MAX_SIZE_KB: ${LOG_MAX_SIZE_KB:-10240}
+      UI_LANGUAGE: ${UI_LANGUAGE:-en}
+      UI_THEME: ${UI_THEME:-system}
+      UI_DARK_MODE: ${UI_DARK_MODE:-false}
+      LOG_DIR: /app/logs
+    volumes:
+      - backend_logs:/app/logs
+      - backend_data:/app/data
+    ports:
+      - target: 53
+        published: 53
+        protocol: udp
+        host_ip: "0.0.0.0"
+      - target: 53
+        published: 53
+        protocol: udp
+        host_ip: "::"
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./docker/frontend
+      dockerfile: Dockerfile
+      args:
+        FRONTEND_REPO: ${FRONTEND_REPO:-https://github.com/Mohammad-Alaaei/dns-server-frontend.git}
+        FRONTEND_REF: ${FRONTEND_REF:-main}
+        VITE_API_BASE_URL: ""
+        CACHEBUST: ${CACHEBUST:-1}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      HTTPS_ENABLED: ${HTTPS_ENABLED:-true}
+      SSL_MODE: ${SSL_MODE:-selfsigned}
+      SSL_CERT_HOSTS: ${SSL_CERT_HOSTS:-localhost,127.0.0.1}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${SSL_CERTS_DIR:-../certs}:/etc/nginx/certs
+    networks:
+      - internal
+
+volumes:
+  mariadb_data:
+  backend_logs:
+  backend_data:
+
+networks:
+  internal:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+        - subnet: "fd00:28::/64"
